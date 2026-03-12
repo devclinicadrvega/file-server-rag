@@ -35,6 +35,12 @@ def init_db():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_share_tokens_file_id ON share_tokens(file_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_share_tokens_expires ON share_tokens(expires_at)")
+        # Migración: agregar columna scheduled_delete_at si no existe
+        try:
+            conn.execute("ALTER TABLE file_records ADD COLUMN scheduled_delete_at TEXT DEFAULT NULL")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_file_records_delete ON file_records(scheduled_delete_at)")
+        except Exception:
+            pass  # La columna ya existe
         conn.commit()
 
 

@@ -151,3 +151,57 @@ def cleanup_expired_tokens() -> int:
         logger.info(f"🧹 Eliminados {count} tokens expirados")
     return count
 
+
+def schedule_delete(file_id: str, hours: int = 48) -> bool:
+    """
+    Marcar un archivo para eliminación automática en `hours` horas.
+    Llamar al cerrar una conversación para que el archivo se elimine
+    cuando expire el share token (lazy deletion sin cron jobs).
+    Retorna True si el archivo existe y fue marcado.
+    """
+    delete_at = _expires_at(hours)
+    with get_db() as db:
+        cursor = db.execute(
+            "UPDATE file_records SET scheduled_delete_at = ? WHERE id = ?",
+            (delete_at, file_id),
+        )
+    if cursor.rowcount:
+        logger.info(f"🗓️ Archivo {file_id} marcado para eliminación en {hours}h ({delete_at})")
+        return True
+    logger.warning(f"⚠️ schedule_delete: archivo no encontrado: {file_id}")
+    return False
+
+
+def run_lazy_cleanup() -> int:
+    """
+    Eliminar archivos cuyo scheduled_delete_at ha vencido.
+    Se llama en cada request (lazy deletion). No bloquea: se ejecuta
+    en hilo separado vía loop.run_in_executor desde el middleware.
+    Retorna cantidad de archivos físicamente eliminados.
+    """
+    now = _now_utc()
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT id, s3_key FROM file_records
+               WHERE scheduled_delete_at IS NOT NULL AND scheduled_delete_at <= ?""",
+            (now,),
+        ).fetchall()
+
+    if not rows:
+        return 0
+
+    deleted = 0
+    for row in rows:
+        try:
+            storage_service.delete_file(row["s3_key"])
+            with get_db() as db:
+                db.execute("DELETE FROM file_records WHERE id = ?", (row["id"],))
+            deleted += 1
+            logger.info(f"🗑️ [LAZY-DELETE] Archivo eliminado: {row['id']} ({row['s3_key']})")
+        except Exception as e:
+            logger.error(f"❌ [LAZY-DELETE] Error eliminando {row['id']}: {e}")
+
+    if deleted:
+        logger.info(f"🧹 [LAZY-DELETE] {deleted} archivo(s) eliminado(s)")
+    return deleted
+

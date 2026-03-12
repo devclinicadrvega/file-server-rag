@@ -1,12 +1,14 @@
 import logging
+import asyncio
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
 from app.services.storage_service import ensure_storage
+from app.services import file_service
 from app.api import internal, public
 
 logging.basicConfig(
@@ -41,6 +43,16 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def lazy_cleanup_middleware(request: Request, call_next):
+    """Lazy deletion: eliminar archivos programados en cada request (sin cron)."""
+    response = await call_next(request)
+    # Ejecutar en hilo separado para no bloquear el response
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, file_service.run_lazy_cleanup)
+    return response
 
 # Rutas públicas (share links, file directo)
 app.include_router(public.router, tags=["public"])

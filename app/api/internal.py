@@ -98,3 +98,30 @@ async def cleanup_expired_tokens(_: str = Depends(require_api_key)):
     """Eliminar tokens expirados. Llamar periódicamente."""
     count = file_service.cleanup_expired_tokens()
     return {"deleted_tokens": count}
+
+
+@router.post("/schedule-delete/{file_id}")
+async def schedule_file_delete(
+    file_id: str,
+    hours: int = 48,
+    _: str = Depends(require_api_key),
+):
+    """
+    Marcar archivo para eliminación automática en `hours` horas.
+
+    Usar al cerrar una conversación: el archivo seguirá disponible
+    mientras el share token sea válido, luego se eliminará en el
+    próximo request al file-server (lazy deletion).
+
+    Parámetros:
+      - file_id: ID del archivo
+      - hours: horas hasta la eliminación (default 48)
+
+    Respuesta: {"scheduled": true, "delete_after": "2026-..."}
+    """
+    from datetime import datetime, timezone, timedelta
+    delete_at = (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+    found = file_service.schedule_delete(file_id, hours)
+    if not found:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    return {"scheduled": True, "file_id": file_id, "delete_after": delete_at}
