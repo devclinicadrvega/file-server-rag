@@ -1,12 +1,11 @@
 import uuid
-import hashlib
 import mimetypes
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from app.database import get_db
 from app.config import settings
-from app.services import s3_service
+from app.services import storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +18,8 @@ def _expires_at(hours: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def _build_s3_key(filename: str) -> str:
-    """Construye la clave S3 con estructura de fecha: YYYY/MM/DD/{uuid}_{filename}"""
+def _build_relative_path(filename: str) -> str:
+    """Construye ruta relativa con estructura de fecha: YYYY/MM/DD/{uuid}_{filename}"""
     now = datetime.now(timezone.utc)
     unique_id = uuid.uuid4().hex[:12]
     safe_name = "".join(c if c.isalnum() or c in "._-" else "_" for c in filename)
@@ -34,37 +33,35 @@ def upload_file(
     platform: Optional[str] = None,
 ) -> dict:
     """
-    Subir archivo a S3 y registrar en DB.
+    Guardar archivo en el volumen y registrar en DB.
 
     Returns:
-        {file_id, s3_key, filename, content_type, size_bytes, share_url, internal_url}
+        {file_id, file_path, filename, content_type, size_bytes, share_url, share_token, internal_url}
     """
     if not content_type:
         content_type, _ = mimetypes.guess_type(filename)
         content_type = content_type or "application/octet-stream"
 
-    s3_key = _build_s3_key(filename)
+    relative_path = _build_relative_path(filename)
     file_id = uuid.uuid4().hex
 
-    s3_service.upload_file(data=data, s3_key=s3_key, content_type=content_type)
+    storage_service.save_file(relative_path, data)
 
     with get_db() as db:
         db.execute(
             """INSERT INTO file_records (id, s3_key, filename, content_type, size_bytes, platform, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (file_id, s3_key, filename, content_type, len(data), platform, _now_utc()),
+            (file_id, relative_path, filename, content_type, len(data), platform, _now_utc()),
         )
 
-    # Generar share token por defecto (48h)
     token = _create_token(file_id, settings.SHARE_TOKEN_HOURS)
     share_url = f"{settings.PUBLIC_URL.rstrip('/')}/s/{token}"
     internal_url = f"{settings.PUBLIC_URL.rstrip('/')}/f/{file_id}"
 
-    logger.info(f"✅ Archivo registrado: {file_id} → {s3_key}")
+    logger.info(f"✅ Archivo registrado: {file_id} → {relative_path}")
 
     return {
         "file_id": file_id,
-        "s3_key": s3_key,
         "filename": filename,
         "content_type": content_type,
         "size_bytes": len(data),
@@ -102,14 +99,14 @@ def create_share_token(file_id: str, hours: Optional[int] = None) -> Optional[st
 
 def get_file_by_token(token: str) -> Optional[dict]:
     """
-    Obtener info del archivo dado un share token.
-    Valida que no haya expirado.
-    Returns dict con {file_id, s3_key, filename, content_type} o None.
+    Obtener info del archivo dado un share token válido (no expirado).
+    Incrementa el contador de descargas.
     """
     now = _now_utc()
     with get_db() as db:
         row = db.execute(
-            """SELECT fr.id, fr.s3_key, fr.filename, fr.content_type, st.token, st.expires_at
+            """SELECT fr.id, fr.s3_key AS file_path, fr.filename, fr.content_type,
+                      st.token, st.expires_at
                FROM share_tokens st
                JOIN file_records fr ON st.file_id = fr.id
                WHERE st.token = ? AND st.expires_at > ?""",
@@ -119,7 +116,6 @@ def get_file_by_token(token: str) -> Optional[dict]:
         if not row:
             return None
 
-        # Incrementar contador
         db.execute(
             "UPDATE share_tokens SET download_count = download_count + 1 WHERE token = ?",
             (token,),
@@ -127,7 +123,7 @@ def get_file_by_token(token: str) -> Optional[dict]:
 
     return {
         "file_id": row["id"],
-        "s3_key": row["s3_key"],
+        "file_path": row["file_path"],
         "filename": row["filename"],
         "content_type": row["content_type"],
     }
@@ -137,20 +133,12 @@ def get_file_by_id(file_id: str) -> Optional[dict]:
     """Obtener info del archivo por file_id (acceso interno autenticado)."""
     with get_db() as db:
         row = db.execute(
-            "SELECT id, s3_key, filename, content_type, size_bytes FROM file_records WHERE id = ?",
+            "SELECT id, s3_key AS file_path, filename, content_type, size_bytes FROM file_records WHERE id = ?",
             (file_id,),
         ).fetchone()
     if not row:
         return None
     return dict(row)
-
-
-def get_presigned_url(file_id: str, expires_seconds: int = 3600) -> Optional[str]:
-    """Generar presigned S3 URL para un file_id (útil para FB/IG adjunto directo)."""
-    record = get_file_by_id(file_id)
-    if not record:
-        return None
-    return s3_service.generate_presigned_url(record["s3_key"], expires_seconds)
 
 
 def cleanup_expired_tokens() -> int:
@@ -162,3 +150,4 @@ def cleanup_expired_tokens() -> int:
     if count:
         logger.info(f"🧹 Eliminados {count} tokens expirados")
     return count
+

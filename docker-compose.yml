@@ -8,24 +8,12 @@ services:
     volumes:
       - file_server_data:/data
     environment:
-      # API Key interna (debe coincidir con FILE_SERVER_API_KEY en el backend)
       - API_KEY=${API_KEY}
-
-      # S3 / Coolify S3
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
-      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
-      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-file-server}
-      - S3_REGION=${S3_REGION:-us-east-1}
-      - S3_PUBLIC_URL=${S3_PUBLIC_URL:-}
-
-      # URL pública del servicio
       - PUBLIC_URL=${PUBLIC_URL:-https://files.crm.clinicadrvega.com}
-
-      # Configuración
+      - STORAGE_PATH=/data/files
+      - DB_PATH=/data/fileserver.db
       - SHARE_TOKEN_HOURS=${SHARE_TOKEN_HOURS:-48}
       - MAX_UPLOAD_MB=${MAX_UPLOAD_MB:-50}
-      - DB_PATH=/data/fileserver.db
       - DEBUG=${DEBUG:-false}
 
 volumes:

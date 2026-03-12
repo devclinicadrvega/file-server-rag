@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db
-from app.services.s3_service import ensure_bucket_exists
+from app.services.storage_service import ensure_storage
 from app.api import internal, public
 
 logging.basicConfig(
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Iniciando file-server...")
     init_db()
     logger.info("✅ Base de datos inicializada")
-    ensure_bucket_exists()
+    ensure_storage()
     yield
     logger.info("🛑 file-server detenido")
 

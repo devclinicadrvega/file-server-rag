@@ -1,11 +1,10 @@
 import logging
 from fastapi import APIRouter, HTTPException, Path
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import Response
 from app.services import file_service
-from app.services.s3_service import download_file
+from app.services.storage_service import read_file
 from app.auth import require_api_key
 from fastapi import Depends
-import io
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,21 +24,18 @@ async def serve_share_link(token: str):
         )
 
     try:
-        data = download_file(record["s3_key"])
+        data = read_file(record["file_path"])
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Archivo no encontrado en almacenamiento")
     except Exception as e:
-        logger.error(f"❌ Error descargando archivo {record['s3_key']}: {e}")
+        logger.error(f"❌ Error leyendo archivo {record['file_path']}: {e}")
         raise HTTPException(status_code=500, detail="Error al obtener archivo")
-
-    filename = record["filename"]
-    content_type = record["content_type"]
 
     return Response(
         content=data,
-        media_type=content_type,
+        media_type=record["content_type"],
         headers={
-            "Content-Disposition": f'inline; filename="{filename}"',
+            "Content-Disposition": f'inline; filename="{record["filename"]}"',
             "Cache-Control": "private, max-age=3600",
             "Content-Length": str(len(data)),
         },
@@ -52,19 +48,19 @@ async def serve_internal_file(
     _: str = Depends(require_api_key),
 ):
     """
-    Servir archivo por file_id (acceso interno autenticado).
-    Usado por el frontend vía el backend proxy.
+    Servir archivo por file_id (acceso interno autenticado con X-API-Key).
+    Usado por el backend para mostrar imágenes al frontend.
     """
     record = file_service.get_file_by_id(file_id)
     if not record:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
     try:
-        data = download_file(record["s3_key"])
+        data = read_file(record["file_path"])
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Archivo no encontrado en almacenamiento")
     except Exception as e:
-        logger.error(f"❌ Error descargando archivo {record['s3_key']}: {e}")
+        logger.error(f"❌ Error leyendo archivo {record['file_path']}: {e}")
         raise HTTPException(status_code=500, detail="Error al obtener archivo")
 
     return Response(
@@ -76,3 +72,4 @@ async def serve_internal_file(
             "Content-Length": str(len(data)),
         },
     )
+

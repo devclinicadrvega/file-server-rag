@@ -1,8 +1,6 @@
 import logging
-import mimetypes
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse, JSONResponse
 from app.auth import require_api_key
 from app.config import settings
 from app.services import file_service
@@ -88,27 +86,11 @@ async def get_file_info(
     file_id: str,
     _: str = Depends(require_api_key),
 ):
-    """Obtener info de un archivo (acceso interno)."""
+    """Obtener metadata de un archivo (acceso interno)."""
     record = file_service.get_file_by_id(file_id)
     if not record:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
     return record
-
-
-@router.get("/presigned/{file_id}")
-async def get_presigned_url(
-    file_id: str,
-    expires: int = 3600,
-    _: str = Depends(require_api_key),
-):
-    """
-    Obtener presigned URL de S3 para un archivo.
-    Útil para intentar envío directo a Facebook/Instagram.
-    """
-    url = file_service.get_presigned_url(file_id, expires)
-    if not url:
-        raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    return {"presigned_url": url, "expires_seconds": expires}
 
 
 @router.delete("/tokens/cleanup")
